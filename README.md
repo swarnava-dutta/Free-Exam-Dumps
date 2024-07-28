@@ -27,7 +27,7 @@ Make sure to install the necessary Python libraries before running the script:
 !pip install requests beautifulsoup4 tqdm
 ```
 ### 3. Run the Script
-Get the code from ```main.ipynb``` and run it in a Colab cell.
+Get the code from ```main.ipynb``` or ```main.py``` and run it in a Colab cell.
 
 ## Code Explanation 🧩
 The script is divided into several parts, each with a specific purpose:
