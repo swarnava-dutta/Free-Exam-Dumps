@@ -1,15 +1,15 @@
 # Free Dumps for any Professional Exam Certification 🕸️
 
-This repository contains a Python script designed to scrape discussion links from the [Exam Topics](https://www.examtopics.com) website based on a specific provider and exam code. 
+This repository contains a Python script designed to scrape exam question links from the [Exam Topics](https://www.examtopics.com) website based on a specific provider and exam code. 
 The script is optimized to run in Google Colab and uses parallel requests for efficient data fetching.
 ### Fetches 2.5 pages per second 📄⌛
 
 ## Features ✨
 
-- Scrapes discussion links from Exam Topics for a specified provider.
-- Filters discussions based on a given exam code.
+- Scrapes exam question links from Exam Topics for a specified provider.
+- Filters the links based on a given exam code.
 - Uses multithreading to speed up the scraping process.
-- Groups and saves the discussion links in a structured text file.
+- Groups and saves the exam question links in a structured text file.
 
 ## Setup Instructions 🚀
 
@@ -89,9 +89,9 @@ class Scraper:
             print(f"\nError on page {page}: {e}")
             return []
 ```
-- Fetches and filters discussion links from a specific page.
+- Fetches and filters exam question links from a specific page.
 
-#### Get Discussion Links
+#### Get Exam Question Links
 ```python
     def get_discussion_links(self, num_pages, search_string):
         links = []
@@ -104,7 +104,7 @@ class Scraper:
                     pbar.update(1)
         return links
 ```
-- Uses parallel requests to fetch discussion links from multiple pages simultaneously.
+- Uses parallel requests to fetch exam question links from multiple pages simultaneously.
 
 ### Utility Functions
 #### Extract Topic and Question
@@ -114,7 +114,7 @@ def extract_topic_question(link):
     match = re.search(r'topic-(\d+)-question-(\d+)', link)
     return (int(match.group(1)), int(match.group(2))) if match else (None, None)
 ```
-- Extracts topic and question numbers from a discussion link.
+- Extracts topic and question numbers from the exam question link.
 
 #### Write Grouped Links to File
 ```python
@@ -131,7 +131,7 @@ def write_grouped_links_to_file(filename, links):
                 f.write(f' - {link}\n')
             print(f"Topic {topic} links added to file.")
 ```
-- Groups and writes the discussion links to a file based on their topic.
+- Groups and writes the exam question links to a file based on their topic.
 
 ### Main Function:
 
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 ```
 
 - Prompts the user for the provider and exam code (put the correct exam code).
-- Fetches and processes the discussion links.
+- Fetches and processes the exam question links.
 - Saves the links to a text file.
   
 ![image](https://github.com/user-attachments/assets/5a896479-5f7d-4904-a8e8-e0371d7a8a9c)
