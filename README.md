@@ -1,6 +1,8 @@
-# Exam Topics Scraper 🕸️
+# Free Dumps for any Professional Exam Certification 🕸️
 
-This repository contains a Python script designed to scrape discussion links from the [Exam Topics](https://www.examtopics.com) website based on a specific provider and exam code. The script is optimized to run in Google Colab and uses parallel requests for efficient data fetching.
+This repository contains a Python script designed to scrape discussion links from the [Exam Topics](https://www.examtopics.com) website based on a specific provider and exam code. 
+The script is optimized to run in Google Colab and uses parallel requests for efficient data fetching.
+### Fetches 2.5 pages per second 📄⌛
 
 ## Features ✨
 
@@ -156,9 +158,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- Prompts the user for the provider and exam code.
+- Prompts the user for the provider and exam code (put the correct exam code).
 - Fetches and processes the discussion links.
 - Saves the links to a text file.
+  
+![image](https://github.com/user-attachments/assets/5a896479-5f7d-4904-a8e8-e0371d7a8a9c)
+
 
 # License 📄
 ### This project is licensed under the MIT License.
