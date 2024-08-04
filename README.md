@@ -2,6 +2,9 @@
 
 This repository contains a Python script designed to scrape exam question links from the [Exam Topics](https://www.examtopics.com) website based on a specific provider and exam code. 
 The script is optimized to run in Google Colab and uses parallel requests for efficient data fetching.
+
+<a href="https://www.buymeacoffee.com/swarnavadutta" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
+
 ### Fetches 2.5 pages per second 📄⌛
 
 ## Features ✨
