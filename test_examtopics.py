@@ -1,5 +1,11 @@
 """Offline checks for the parsing and matching logic. Run: python test_examtopics.py"""
 
+import os
+import tempfile
+import time
+from pathlib import Path
+
+from examtopics.cache import HtmlCache
 from examtopics.index import find_exams
 from examtopics.matching import (
     discussion_entry_url,
@@ -121,6 +127,35 @@ def test_question_parsing():
     assert "\nWhich benefit applies?" in question["text"]
     assert "[image: https://www.examtopics.com/assets/media/x/1.png]" in question["text"]
     assert sum(vote["vote_count"] for vote in question["votes"]) == 37
+
+
+def test_cache_read_write_forget_and_purge():
+    with tempfile.TemporaryDirectory() as directory:
+        cache = HtmlCache(Path(directory), ttl_seconds=3600)
+        fresh, stale = "https://x/fresh", "https://x/stale"
+        cache.write(fresh, "new page")
+        cache.write(stale, "old page")
+
+        assert cache.read(fresh) == "new page"
+        # An explicit shorter TTL overrides the default.
+        assert cache.read(fresh, ttl_seconds=1) is not None
+        assert cache.read("https://x/never-written") is None
+
+        # Backdate one entry by two hours.
+        old = time.time() - 7200
+        os.utime(cache._path_for(stale), (old, old))
+        assert cache.read(stale) is None, "TTL not applied on read"
+        assert cache.read(stale, ttl_seconds=0) == "old page", "0 must mean never expire"
+
+        # Purge must remove the backdated entry and keep the fresh one.
+        assert cache.purge_older_than(3600) == 1
+        assert cache.read(stale, ttl_seconds=0) is None
+        assert cache.read(fresh) == "new page"
+        assert cache.purge_older_than(0) == 0, "0 must be a no-op, not delete everything"
+
+        cache.forget(fresh)
+        assert cache.read(fresh) is None
+        cache.forget(fresh)  # forgetting twice must not raise
 
 
 def test_block_detection_does_not_eat_real_pages():

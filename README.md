@@ -213,13 +213,30 @@ Pick a number, or press Enter to search again:
 
 Type a number and press Enter. Press Enter on its own to search again instead.
 
-**A typo costs you a second, not a scrape:**
+**A brand-new exam is fetched from the site automatically.** The exam list is cached for a
+week, so an exam added since then is not on it. Rather than telling you it does not exist,
+the tool rechecks examtopics.com and searches again:
+
+```text
+Exam code or name: hpe7-a07
+  'hpe7-a07' is not on the cached list. Checking examtopics.com...
+2252 exams indexed.
+
+Exam:      HPE Campus Access Mobility Expert
+Provider:  hp
+```
+
+That recheck happens at most once per run (~25s), so if you simply mistyped, the next
+attempt is instant:
 
 ```text
 Exam code or name: saa-c99
+  'saa-c99' is not on the cached list. Checking examtopics.com...
+2252 exams indexed.
   No exam matches 'saa-c99'. Try an exam code such as SAA-C03.
 
-Exam code or name:
+Exam code or name: zzznotreal
+  No exam matches 'zzznotreal'. Try an exam code such as SAA-C03.
 ```
 
 Dashes, spaces and capitals do not matter. `SAA-C03`, `saa c03` and `saac03` all work.
@@ -244,14 +261,31 @@ and does not help — see the notes at the bottom.
 
 ---
 
-## Running it again
+## Running it again, and disk use
 
 Downloaded pages are cached in a hidden `.examtopics_cache` folder.
 
-- Re-run the **same exam within 6 hours** and it finishes in seconds from cache.
+- Re-run the **same exam within 6 hours** and it finishes in seconds.
 - After 6 hours, pages are re-downloaded so you pick up new community answers.
-- The exam list is cached for 7 days.
-- To force a completely fresh download, delete the `.examtopics_cache` folder.
+- The exam list is cached for 7 days, and refreshed on demand as described above.
+- Scraping a **second exam from the same provider is much faster**, because a provider's
+  discussion listing pages are shared. AWS DVA-C02 took 58s right after SAA-C03, having
+  reused all 604 of amazon's listing pages.
+
+**The cache gets big.** Listing pages are the bulk of it:
+
+| | Files | Size | Share |
+|---|---|---|---|
+| Exam index | 189 | 9 MB | 2% |
+| Provider listing pages | 2215 | 420 MB | 70% |
+| Question pages | 2022 | 168 MB | 28% |
+
+That is ~600 MB after seven exams, and a single big provider dominates — Microsoft's 1510
+listing pages alone are 332 MB. Entries older than 7 days are deleted automatically at
+startup, so it cannot grow forever, but it can still get large in a heavy week.
+
+To reclaim the space at any time, delete the `.examtopics_cache` folder. Nothing breaks;
+the next run just re-downloads what it needs.
 
 Output files are overwritten each run, so move or rename anything you want to keep.
 
@@ -265,7 +299,9 @@ Output files are overwritten each run, so move or rename anything you want to ke
 | `[ERROR] Could not create the virtual environment.` | Same cause as above. Install Python 3 from python.org, then re-run `install_dependencies.bat`. |
 | `[WARN] .venv not found.` | You skipped Step 2. Double-click `install_dependencies.bat` first. |
 | The window flashes open and closes instantly | Do not run the `.py` file directly. Use `run_scraper.bat`, which keeps the window open. |
-| `No exam matches '...'` | Check the code, or type part of the exam name instead and pick from the list. |
+| `No exam matches '...'` | The tool has already rechecked the site, so the exam genuinely is not there under that name. Type part of the exam name instead and pick from the list. |
+| `is not on the cached list. Checking examtopics.com...` | Normal. The exam list was over a week old, so it is being rebuilt. ~25s, once per run. |
+| The `.examtopics_cache` folder is huge | Expected — see "Running it again, and disk use". Delete the folder to reclaim it. |
 | `No discussion links found for this exam.` | Nobody has posted discussions for that exam yet. There is nothing to download. |
 | `[WARN] N pages failed after retries.` | A few requests were refused. The output is still written, just short by those pages. Wait a minute and run again; the cache keeps everything that already succeeded. |
 | Fewer questions than the `Published:` count | Normal. See "What this cannot do" below. |
@@ -345,7 +381,12 @@ Every decision below came from measuring the live site, not from guessing.
   phrases like "access denied" silently discarded real AWS IAM questions — 2 of 1019 on
   SAA-C03.
 - **The cache is time-based** because ExamTopics sends no `ETag` and no `Last-Modified`, so
-  conditional requests would always return a full page anyway.
+  conditional requests would always return a full page anyway. Expired entries are swept at
+  startup; reading alone never deleted anything, so the cache used to grow without bound.
+- **The published question count is cached for 6 hours, not 7 days like the exam list.** It
+  decides when the scan stops early, and a stale low count stops the scan short — feeding
+  the scanner an understated 200 on SAA-C03 returned 556 links instead of 1019. At 6 hours
+  the count and the listing pages are always the same snapshot.
 - **Failures get a second slow pass.** Anything still missing after that is reported as a
   `[WARN]`, never silently dropped.
 

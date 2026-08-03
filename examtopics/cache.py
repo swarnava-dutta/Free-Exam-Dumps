@@ -27,6 +27,35 @@ class HtmlCache:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(html, encoding="utf-8")
 
+    def forget(self, url: str):
+        """Drop one entry so the next fetch goes to the network."""
+        path = self._path_for(url)
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+    def purge_older_than(self, max_age_seconds: int) -> int:
+        """Delete entries past `max_age_seconds` and return how many went.
+
+        Read alone never removes anything, so without this the cache grows without
+        bound: ~600MB after seven exams, 332MB of it one provider's listing pages.
+        `max_age_seconds` must be the longest TTL in use, since entries are written with
+        different lifetimes and nothing on disk records which.
+        """
+        if self.cache_dir is None or max_age_seconds <= 0:
+            return 0
+
+        cutoff = time.time() - max_age_seconds
+        removed = 0
+        for path in self.cache_dir.glob("*.html"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+            except OSError:
+                # ponytail: a file vanishing mid-sweep is fine, skip it.
+                pass
+        return removed
+
     def _path_for(self, url: str) -> Optional[Path]:
         if self.cache_dir is None:
             return None

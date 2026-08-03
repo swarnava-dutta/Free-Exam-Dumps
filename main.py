@@ -17,11 +17,17 @@ MAX_CHOICES = 20
 def main():
     print(f"\n{'=' * 60}\n  ExamTopics Scraper\n{'=' * 60}\n")
 
-    fetcher = HttpFetcher(HtmlCache(Path(CACHE_DIR), PAGE_TTL))
+    cache = HtmlCache(Path(CACHE_DIR), PAGE_TTL)
+    cache.purge_older_than(INDEX_TTL)
+    fetcher = HttpFetcher(cache)
     exams = load_exam_index(fetcher)
-    provider, exam_slug, exam_name = choose_exam(exams)
+    provider, exam_slug, exam_name = choose_exam(fetcher, exams)
 
-    published = parse_question_count(fetcher.fetch_html(exam_url(provider, exam_slug), INDEX_TTL))
+    # ponytail: PAGE_TTL, not INDEX_TTL. This count drives the scan's early stop, and a
+    # stale low count stops the scan short -- an understated 200 on SAA-C03 returned 556
+    # links instead of 1019. PAGE_TTL also matches the listing pages being scanned, so the
+    # count and the pages are always the same 6-hour snapshot.
+    published = parse_question_count(fetcher.fetch_html(exam_url(provider, exam_slug)))
     total_pages = count_discussion_pages(fetcher, provider)
 
     print(f"\nExam:      {exam_name}")
@@ -44,11 +50,11 @@ def main():
     print(f"\nWrote {dumps_path}  ({len(questions)} questions)")
 
 
-def load_exam_index(fetcher: HttpFetcher):
+def load_exam_index(fetcher: HttpFetcher, refresh: bool = False):
     """Load the provider/exam index, showing a bar only while it is actually fetching."""
     bar = tqdm(desc="Loading exam index", unit="provider", leave=False)
     try:
-        exams = load_exams(fetcher, on_progress=lambda error: bar.update(1))
+        exams = load_exams(fetcher, on_progress=lambda error: bar.update(1), refresh=refresh)
     finally:
         bar.close()
 
@@ -58,8 +64,9 @@ def load_exam_index(fetcher: HttpFetcher):
     return exams
 
 
-def choose_exam(exams):
+def choose_exam(fetcher: HttpFetcher, exams):
     """Resolve an exam code or name to exactly one (provider, slug, name)."""
+    refreshed = False
     while True:
         query = input("Exam code or name (example: SAA-C03, AZ-104, SY0-701): ").strip()
         if not query:
@@ -67,6 +74,15 @@ def choose_exam(exams):
             continue
 
         hits = find_exams(query, exams)
+        if not hits and not refreshed:
+            # ponytail: the exam list is cached for a week, so an exam added since then
+            # looks like it does not exist. Rebuild from the site once per session, then
+            # search again. Once per session, so later typos stay instant.
+            print(f"  '{query}' is not on the cached list. Checking examtopics.com...")
+            exams = load_exam_index(fetcher, refresh=True)
+            refreshed = True
+            hits = find_exams(query, exams)
+
         if not hits:
             print(f"  No exam matches '{query}'. Try an exam code such as SAA-C03.\n")
             continue

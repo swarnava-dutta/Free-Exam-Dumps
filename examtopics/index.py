@@ -15,11 +15,18 @@ from .settings import BASE_URL, INDEX_TTL
 Exam = Tuple[str, str, str]  # (provider, exam slug, display name)
 
 
-def load_exams(fetcher: HttpFetcher, on_progress=None) -> List[Exam]:
-    providers = extract_providers(fetcher.fetch_html(f"{BASE_URL}/exams/", INDEX_TTL))
+def load_exams(fetcher: HttpFetcher, on_progress=None, refresh: bool = False) -> List[Exam]:
+    """`refresh` bypasses the cache, for when a brand-new exam is missing from it."""
+
+    def read(url: str) -> str:
+        if refresh:
+            fetcher.cache.forget(url)
+        return fetcher.fetch_html(url, INDEX_TTL)
+
+    providers = extract_providers(read(f"{BASE_URL}/exams/"))
 
     def load(provider: str) -> List[Exam]:
-        html = fetcher.fetch_html(f"{BASE_URL}/exams/{provider}/", INDEX_TTL)
+        html = read(f"{BASE_URL}/exams/{provider}/")
         return [(provider, slug, name) for slug, name in extract_exam_entries(html, provider)]
 
     exams: List[Exam] = []
