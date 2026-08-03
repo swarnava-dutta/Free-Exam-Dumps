@@ -1,5 +1,2 @@
-beautifulsoup4
-camoufox
-playwright
 requests
 tqdm

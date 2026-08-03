@@ -1,33 +1,19 @@
 @echo off
 setlocal EnableExtensions
+rem UTF-8 console so exam names with accented characters print instead of crashing.
 chcp 65001 >nul
 title ExamTopics Scraper
-color 0B
 
 cd /d "%~dp0"
 
 if exist ".venv\Scripts\python.exe" (
-    set "PYTHON_EXE=.venv\Scripts\python.exe"
+    ".venv\Scripts\python.exe" main.py
 ) else (
-    echo [WARN] Local .venv not found.
-    echo Run install_dependencies.bat first for best results.
+    echo [WARN] .venv not found. Run install_dependencies.bat first.
+    echo Trying system Python instead...
     echo.
-    where python >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR] Python not found.
-        echo.
-        pause
-        exit /b 1
-    )
-    set "PYTHON_EXE=python"
+    python main.py
 )
 
-%PYTHON_EXE% main.py
-
-echo.
-echo ============================================================
-echo   Finished.
-echo ============================================================
 echo.
 pause
-exit /b 0

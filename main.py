@@ -1,103 +1,92 @@
 from pathlib import Path
 
-from examtopics.browser_scraper import CamoufoxScraper
+from tqdm import tqdm
+
 from examtopics.cache import HtmlCache
-from examtopics.fast_scanner import FastDiscussionScanner
 from examtopics.http_client import HttpFetcher
-from examtopics.matching import build_page_numbers, display_slug, normalize_provider
-from examtopics.output import write_grouped_links_to_file
-from examtopics.settings import (
-    DEFAULT_CACHE_DIR,
-    DEFAULT_CACHE_TTL_SECONDS,
-    DEFAULT_DELAY_RANGE,
-    DEFAULT_RETRIES,
-    DEFAULT_REQUEST_WORKERS,
-    DEFAULT_TIMEOUT_MS,
-)
+from examtopics.index import find_exams, load_exams
+from examtopics.matching import exam_url
+from examtopics.output import write_links, write_questions
+from examtopics.parsers import parse_question_count
+from examtopics.scanner import count_discussion_pages, fetch_questions, scan_exam_links
+from examtopics.settings import CACHE_DIR, INDEX_TTL, PAGE_TTL
+
+MAX_CHOICES = 20
 
 
 def main():
-    print_header()
+    print(f"\n{'=' * 60}\n  ExamTopics Scraper\n{'=' * 60}\n")
 
-    while True:
-        print("Choose option:")
-        print("  1. Scrape")
-        print("  2. Exit")
-        print()
+    fetcher = HttpFetcher(HtmlCache(Path(CACHE_DIR), PAGE_TTL))
+    exams = load_exam_index(fetcher)
+    provider, exam_slug, exam_name = choose_exam(exams)
 
-        choice = input("Enter choice [1]: ").strip() or "1"
-        if choice == "1":
-            scrape_from_terminal()
-            return
-        if choice == "2":
-            return
+    published = parse_question_count(fetcher.fetch_html(exam_url(provider, exam_slug), INDEX_TTL))
+    total_pages = count_discussion_pages(fetcher, provider)
 
-        print("Invalid choice.\n")
+    print(f"\nExam:      {exam_name}")
+    print(f"Provider:  {provider}")
+    print(f"Published: {published or 'unknown'} questions")
+    print(f"Scanning:  {total_pages} discussion page{'' if total_pages == 1 else 's'}\n")
 
+    links = scan_exam_links(fetcher, provider, exam_slug, total_pages, published)
+    if not links:
+        print("\nNo discussion links found for this exam.")
+        return
 
-def print_header():
-    print()
-    print("=" * 60)
-    print("  ExamTopics Scraper")
-    print("=" * 60)
-    print()
+    links_path = f"{exam_slug} links.txt"
+    write_links(links_path, links)
+    print(f"\nWrote {links_path}  ({len(links)} links)\n")
 
-
-def scrape_from_terminal():
-    provider = prompt_required("Provider (example: amazon, hp, microsoft): ")
-    exam_code = prompt_required(
-        "Exam name or code (example: AIF-C01, HPE7-A07, aws-devops-engineer-professional): "
-    )
-
-    provider = normalize_provider(provider)
-    cache = HtmlCache(Path(DEFAULT_CACHE_DIR), DEFAULT_CACHE_TTL_SECONDS)
-    links = scan_discussion_links(provider, exam_code, cache)
-
-    filename = f"{display_slug(exam_code).upper()} dumps.txt"
-    print(f"\nYour file will be named {filename}")
-    write_grouped_links_to_file(filename, links)
-    print(f"File generation complete. {len(links)} links found.")
+    questions = fetch_questions(fetcher, links)
+    dumps_path = f"{exam_slug} dumps.txt"
+    write_questions(dumps_path, questions, exam_name, provider)
+    print(f"\nWrote {dumps_path}  ({len(questions)} questions)")
 
 
-def prompt_required(prompt: str) -> str:
-    while True:
-        value = input(prompt).strip()
-        if value:
-            return value
-        print("[ERROR] Value is required.\n")
-
-
-def build_fetcher(cache: HtmlCache) -> HttpFetcher:
-    return HttpFetcher(
-        timeout=DEFAULT_TIMEOUT_MS // 1000,
-        retries=DEFAULT_RETRIES,
-        cache=cache,
-        refresh_cache=False,
-    )
-
-
-def scan_discussion_links(provider: str, exam_code: str, cache: HtmlCache):
+def load_exam_index(fetcher: HttpFetcher):
+    """Load the provider/exam index, showing a bar only while it is actually fetching."""
+    bar = tqdm(desc="Loading exam index", unit="provider", leave=False)
     try:
-        scanner = FastDiscussionScanner(provider, build_fetcher(cache), delay_range=DEFAULT_DELAY_RANGE)
-        total_pages = scanner.get_num_pages()
-        page_numbers = build_page_numbers(total_pages, 1, None, None)
-        print(f"\nScanning Pages: {page_numbers[0]}-{page_numbers[-1]} ({len(page_numbers)} pages)")
-        return scanner.scan(page_numbers, exam_code, workers=DEFAULT_REQUEST_WORKERS)
-    except Exception as exc:
-        print(f"Fast scan failed; falling back to Camoufox: {exc}")
+        exams = load_exams(fetcher, on_progress=lambda error: bar.update(1))
+    finally:
+        bar.close()
 
-    with CamoufoxScraper(
-        provider,
-        headless=True,
-        timeout_ms=DEFAULT_TIMEOUT_MS,
-        retries=DEFAULT_RETRIES,
-        delay_range=DEFAULT_DELAY_RANGE,
-    ) as scraper:
-        total_pages = scraper.get_num_pages()
-        page_numbers = build_page_numbers(total_pages, 1, None, None)
-        print(f"\nScanning Pages: {page_numbers[0]}-{page_numbers[-1]} ({len(page_numbers)} pages)")
-        return scraper.get_discussion_links(page_numbers, exam_code)
+    if not exams:
+        raise SystemExit("Could not load the exam index. Check your connection.")
+    print(f"{len(exams)} exams indexed.\n")
+    return exams
+
+
+def choose_exam(exams):
+    """Resolve an exam code or name to exactly one (provider, slug, name)."""
+    while True:
+        query = input("Exam code or name (example: SAA-C03, AZ-104, SY0-701): ").strip()
+        if not query:
+            print("  [ERROR] Value is required.\n")
+            continue
+
+        hits = find_exams(query, exams)
+        if not hits:
+            print(f"  No exam matches '{query}'. Try an exam code such as SAA-C03.\n")
+            continue
+        if len(hits) == 1:
+            return hits[0]
+
+        print()
+        for number, (provider, _, name) in enumerate(hits[:MAX_CHOICES], 1):
+            print(f"  {number:2}. [{provider}] {name}")
+        if len(hits) > MAX_CHOICES:
+            print(f"  ... and {len(hits) - MAX_CHOICES} more. Narrow the search to see them.")
+
+        answer = input("\nPick a number, or press Enter to search again: ").strip()
+        if answer.isdigit() and 1 <= int(answer) <= min(len(hits), MAX_CHOICES):
+            return hits[int(answer) - 1]
+        print()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nCancelled.")

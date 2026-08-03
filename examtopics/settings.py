@@ -1,13 +1,24 @@
 BASE_URL = "https://www.examtopics.com"
 
-DEFAULT_TIMEOUT_MS = 45_000
-DEFAULT_RETRIES = 3
-DEFAULT_DELAY_RANGE = (0.5, 1.4)
-MAX_HTTP_POOL_SIZE = 64
-DEFAULT_REQUEST_WORKERS = MAX_HTTP_POOL_SIZE
-DEFAULT_CLEAN_WORKERS = 4
-DEFAULT_CACHE_DIR = ".examtopics_cache"
-DEFAULT_CACHE_TTL_SECONDS = 6 * 60 * 60
+TIMEOUT = 30
+RETRIES = 3
+
+# ponytail: measured ceiling. 16/32/64/96 workers all landed on ~6-8 req/s against
+# examtopics, so the cap is server side and extra workers only add sockets. Raise
+# this only if a fresh measurement shows the cap moved.
+WORKERS = 24
+
+# How many pages to fetch before re-checking the early-stop condition.
+CHUNK_PAGES = WORKERS * 4
+
+# Second-pass concurrency. A captcha page is a rate-limit signal, so stragglers are
+# re-fetched slowly instead of being reported as lost.
+RETRY_WORKERS = 2
+
+CACHE_DIR = ".examtopics_cache"
+PAGE_TTL = 6 * 60 * 60
+# Exam lists change rarely, so the provider/exam index gets a long cache life.
+INDEX_TTL = 7 * 24 * 60 * 60
 
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -16,44 +27,8 @@ REQUEST_HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Connection": "keep-alive",
+    # ponytail: Accept-Encoding is deliberately absent. requests advertises only the
+    # codecs it can actually decode. Hardcoding "br" here makes examtopics reply with
+    # brotli, which requests silently fails to decode when brotli is not installed --
+    # you get a 200 with an unparseable body and zero results.
 }
-
-POPUP_SUPPRESS_SCRIPT = """
-(() => {
-  const killExamTopicsPopup = () => {
-    for (const el of document.querySelectorAll("#notRemoverPopup, .popup-overlay")) {
-      el.remove();
-    }
-    if (document.body) {
-      document.body.style.overflow = "";
-      document.body.style.pointerEvents = "";
-    }
-    document.documentElement.style.overflow = "";
-  };
-
-  try {
-    Object.defineProperty(window, "createPopup", {
-      value: () => {},
-      writable: false,
-      configurable: true
-    });
-  } catch (_) {}
-
-  window.addEventListener("DOMContentLoaded", killExamTopicsPopup, true);
-  window.addEventListener("load", killExamTopicsPopup, true);
-  window.setInterval(killExamTopicsPopup, 200);
-})();
-"""
-
-BLOCKED_URL_PARTS = (
-    "googletagmanager.com",
-    "google-analytics.com",
-    "doubleclick.net",
-    "googlesyndication.com",
-    "googleadservices.com",
-    "facebook.net",
-    "hotjar.com",
-    "clarity.ms",
-    "visualwebsiteoptimizer.com",
-)
