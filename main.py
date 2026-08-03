@@ -49,6 +49,15 @@ def main():
     write_questions(dumps_path, questions, exam_name, provider)
     print(f"\nWrote {dumps_path}  ({len(questions)} questions)")
 
+    # Coverage is the question people actually have, so state it instead of leaving them
+    # to compare two numbers printed a few minutes apart. A shortfall means questions with
+    # no public discussion, not a failed scrape.
+    if published:
+        print(
+            f"Coverage:  {len(questions)} of {published} published "
+            f"({100 * len(questions) // published}%)"
+        )
+
 
 def load_exam_index(fetcher: HttpFetcher, refresh: bool = False):
     """Load the provider/exam index, showing a bar only while it is actually fetching."""

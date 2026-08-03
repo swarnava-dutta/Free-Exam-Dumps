@@ -315,15 +315,26 @@ Be clear-eyed about this before you rely on it.
 
 - **It does not bypass anything.** No login, no contributor access, no captcha solving, no
   paid tier. It reads pages that are already public to anyone with a browser.
-- **You only get questions the community has discussed.** ExamTopics may list 99 questions
-  for an exam while only 14 have discussion pages. You get those 14. Both numbers are
-  printed, so the gap is always visible to you:
+- **You only get questions the community has discussed.** This is the big one, and it varies
+  enormously by exam. Every run ends with the number stated plainly:
 
   ```text
-  Published: 99 questions
-  ...
   Wrote github-actions dumps.txt  (14 questions)
+  Coverage:  14 of 99 published (14%)
   ```
+
+  Measured coverage:
+
+  | Exam | Got | Published | Coverage | Question numbers |
+  |---|---|---|---|---|
+  | `saa-c03` | 1019 | 1019 | **100%** | 1–1019, no gaps |
+  | `dva-c02` | 557 | 557 | **100%** | 1–557, no gaps |
+  | `gh-300` | 103 | 116 | 89% | 7 topics, 6 gaps |
+  | `hpe7-a07` | 18 | 62 | 29% | 1–59, 41 gaps |
+  | `github-actions` | 14 | 99 | 14% | 1–52, 38 gaps |
+
+  Popular exams are complete. Niche ones are sparse, because a question nobody discussed
+  has no public page to read. Nothing can fix that from outside the paywall.
 
 - **Answers are not authoritative.** `Suggested answer` is ExamTopics' answer and it is
   sometimes wrong; that is exactly why the community vote is shown next to it. Use both.
@@ -389,6 +400,22 @@ Every decision below came from measuring the live site, not from guessing.
   the count and the listing pages are always the same snapshot.
 - **Failures get a second slow pass.** Anything still missing after that is reported as a
   `[WARN]`, never silently dropped.
+
+Repeatability was checked rather than assumed. Across `saa-c03`, `dva-c02`, `gh-300`,
+`hpe7-a07` and `github-actions`:
+
+- The early stop was compared against a full scan of every page on all five exams. Same
+  links both ways, every time — it has never been observed to lose a question.
+- Two independent cold scans of `saa-c03`, cache cleared between them, returned identical
+  1019-link sets.
+- Two independent cold fetches of all 1154 questions across four exams produced identical
+  results, with zero entries missing question text, choices, a suggested answer or a
+  community answer, and no duplicate topic/question pairs.
+
+One inherent caveat: the provider listing is ordered by last activity, so pages can shift
+while a scan is in flight. No drift was observed in testing, and duplicates are removed
+either way, but a very active provider could in principle move an entry across a page
+boundary mid-scan. The coverage line is your check on that.
 
 ---
 
