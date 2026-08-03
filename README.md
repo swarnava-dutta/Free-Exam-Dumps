@@ -115,8 +115,8 @@ run_scraper.bat
 On the very first run you will see a progress bar labelled `Loading exam index`. The tool
 is reading the exam list for all 188 provider pages so it can recognise any code you type.
 
-This takes about **30 seconds, once**. It is then cached for 7 days, so every later run
-starts instantly.
+This takes about **30 seconds, once**. The finished list is saved to
+`.examtopics_index.json` (about 160 KB) and reused, so every later run starts instantly.
 
 ### Step 5 — Type your exam code
 
@@ -213,13 +213,13 @@ Pick a number, or press Enter to search again:
 
 Type a number and press Enter. Press Enter on its own to search again instead.
 
-**A brand-new exam is fetched from the site automatically.** The exam list is cached for a
-week, so an exam added since then is not on it. Rather than telling you it does not exist,
-the tool rechecks examtopics.com and searches again:
+**A brand-new exam is fetched from the site automatically.** The saved exam list never
+expires, so an exam added since you built it is not on it. Rather than telling you it does
+not exist, the tool rechecks examtopics.com and searches again:
 
 ```text
 Exam code or name: hpe7-a07
-  'hpe7-a07' is not on the cached list. Checking examtopics.com...
+  'hpe7-a07' is not on the saved list. Checking examtopics.com...
 2252 exams indexed.
 
 Exam:      HPE Campus Access Mobility Expert
@@ -231,7 +231,7 @@ attempt is instant:
 
 ```text
 Exam code or name: saa-c99
-  'saa-c99' is not on the cached list. Checking examtopics.com...
+  'saa-c99' is not on the saved list. Checking examtopics.com...
 2252 exams indexed.
   No exam matches 'saa-c99'. Try an exam code such as SAA-C03.
 
@@ -249,11 +249,10 @@ Measured on a normal home connection:
 
 | | |
 |---|---|
-| Exam index, first run only | ~30s, then cached 7 days |
-| Small exam, e.g. `github-actions` (14 questions) | ~10s |
+| Building the exam list, first run only | ~30s, then reused |
+| Small exam, e.g. `github-actions` (14 questions) | ~9s |
 | Medium exam, e.g. `hpe7-a07` (18 questions, 96 pages) | ~17s |
-| Large exam, `SAA-C03` (1019 questions, 604 pages) | **192s** |
-| Any exam, run a second time within 6 hours | ~5s, served from cache |
+| Large exam, `SAA-C03` (1019 questions, 604 pages) | **169s** |
 
 Speed is limited by ExamTopics, not by the tool. Scanning runs at about 8 pages/second and
 question fetching at about 11 questions/second. Using more parallel workers was measured
@@ -261,31 +260,25 @@ and does not help — see the notes at the bottom.
 
 ---
 
-## Running it again, and disk use
+## What it keeps on disk
 
-Downloaded pages are cached in a hidden `.examtopics_cache` folder.
+One file, `.examtopics_index.json`, about **160 KB**. That is the list of 2252 exams and
+which provider each belongs to, saved so the ~190 requests behind it are not repeated on
+every run. It has no expiry, and it is refreshed automatically when a search misses.
 
-- Re-run the **same exam within 6 hours** and it finishes in seconds.
-- After 6 hours, pages are re-downloaded so you pick up new community answers.
-- The exam list is cached for 7 days, and refreshed on demand as described above.
-- Scraping a **second exam from the same provider is much faster**, because a provider's
-  discussion listing pages are shared. AWS DVA-C02 took 58s right after SAA-C03, having
-  reused all 604 of amazon's listing pages.
+**Nothing else is stored.** Every listing page, question page and question count is fetched
+live on every run, so what you get is always current.
 
-**The cache gets big.** Listing pages are the bulk of it:
+Earlier versions cached the pages too. It was removed: within a single run every page is
+fetched exactly once, so the cache never sped up the run you were waiting on — it only
+helped a *later* run, in exchange for **437 MB** of disk and three bugs (a stale question
+count that cut scans short, unbounded growth, and a sweep that expired the wrong tier).
+Deleting it made a full SAA-C03 run *faster*, 192s to 169s, because it no longer writes
+250 MB of HTML while you wait.
 
-| | Files | Size | Share |
-|---|---|---|---|
-| Exam index | 189 | 9 MB | 2% |
-| Provider listing pages | 2215 | 420 MB | 70% |
-| Question pages | 2022 | 168 MB | 28% |
-
-That is ~600 MB after seven exams, and a single big provider dominates — Microsoft's 1510
-listing pages alone are 332 MB. Entries older than 7 days are deleted automatically at
-startup, so it cannot grow forever, but it can still get large in a heavy week.
-
-To reclaim the space at any time, delete the `.examtopics_cache` folder. Nothing breaks;
-the next run just re-downloads what it needs.
+What that trade gives up, honestly: re-running the same exam is no longer near-instant, a
+second exam from the same provider no longer reuses the first one's listing pages, and an
+interrupted run starts over rather than resuming.
 
 Output files are overwritten each run, so move or rename anything you want to keep.
 
@@ -300,12 +293,11 @@ Output files are overwritten each run, so move or rename anything you want to ke
 | `[WARN] .venv not found.` | You skipped Step 2. Double-click `install_dependencies.bat` first. |
 | The window flashes open and closes instantly | Do not run the `.py` file directly. Use `run_scraper.bat`, which keeps the window open. |
 | `No exam matches '...'` | The tool has already rechecked the site, so the exam genuinely is not there under that name. Type part of the exam name instead and pick from the list. |
-| `is not on the cached list. Checking examtopics.com...` | Normal. The exam list was over a week old, so it is being rebuilt. ~25s, once per run. |
-| The `.examtopics_cache` folder is huge | Expected — see "Running it again, and disk use". Delete the folder to reclaim it. |
+| `is not on the saved list. Checking examtopics.com...` | Normal. The exam was added after you built the list, so it is being rebuilt. ~25s, once per run. |
 | `No discussion links found for this exam.` | Nobody has posted discussions for that exam yet. There is nothing to download. |
-| `[WARN] N pages failed after retries.` | A few requests were refused. The output is still written, just short by those pages. Wait a minute and run again; the cache keeps everything that already succeeded. |
+| `[WARN] N pages failed after retries.` | A few requests were refused. The output is still written, just short by those pages. Wait a minute and run it again. |
 | Fewer questions than the `Published:` count | Normal. See "What this cannot do" below. |
-| It feels stuck on `Loading exam index` | It is fetching 188 pages. Give it 30 seconds. It only happens once a week. |
+| It feels stuck on `Loading exam index` | It is fetching 188 pages. Give it 30 seconds. It only happens on the first run, or after deleting `.examtopics_index.json`. |
 
 ---
 
@@ -391,13 +383,12 @@ Every decision below came from measuring the live site, not from guessing.
 - **Blocked-page detection requires the site nav to be missing.** Searching whole pages for
   phrases like "access denied" silently discarded real AWS IAM questions — 2 of 1019 on
   SAA-C03.
-- **The cache is time-based** because ExamTopics sends no `ETag` and no `Last-Modified`, so
-  conditional requests would always return a full page anyway. Expired entries are swept at
-  startup; reading alone never deleted anything, so the cache used to grow without bound.
-- **The published question count is cached for 6 hours, not 7 days like the exam list.** It
-  decides when the scan stops early, and a stale low count stops the scan short — feeding
-  the scanner an understated 200 on SAA-C03 returned 556 links instead of 1019. At 6 hours
-  the count and the listing pages are always the same snapshot.
+- **Pages are never cached.** Only the exam list is saved. Caching pages could not speed up
+  the run you are waiting on, because each page is fetched once anyway — and it cost 437 MB
+  plus a stale-count bug that cut scans short. Removing it made SAA-C03 go 192s to 169s.
+- **The published question count is fetched live**, because it decides when the scan stops
+  early. Reading a stale low count stops the scan short: feeding the scanner an understated
+  200 on SAA-C03 returned 556 links instead of 1019.
 - **Failures get a second slow pass.** Anything still missing after that is reported as a
   `[WARN]`, never silently dropped.
 
@@ -406,8 +397,8 @@ Repeatability was checked rather than assumed. Across `saa-c03`, `dva-c02`, `gh-
 
 - The early stop was compared against a full scan of every page on all five exams. Same
   links both ways, every time — it has never been observed to lose a question.
-- Two independent cold scans of `saa-c03`, cache cleared between them, returned identical
-  1019-link sets.
+- Two independent scans of `saa-c03`, both downloading all 604 listing pages fresh, returned
+  identical 1019-link sets.
 - Two independent cold fetches of all 1154 questions across four exams produced identical
   results, with zero entries missing question text, choices, a suggested answer or a
   community answer, and no duplicate topic/question pairs.
@@ -432,14 +423,13 @@ examtopics/index.py         provider and exam index, exam code lookup
 examtopics/scanner.py       listing scan and question fetch
 examtopics/parsers.py       HTML extraction
 examtopics/matching.py      slugs and exam matching
-examtopics/http_client.py   cached retrying GET, thread pool
-examtopics/cache.py         HTML cache on disk
+examtopics/http_client.py   retrying GET, thread pool
 examtopics/output.py        the two output files
 examtopics/settings.py      tunables
 ```
 
 Want it faster or slower? Everything adjustable lives in `examtopics/settings.py`:
-`WORKERS`, `TIMEOUT`, `RETRIES`, and the two cache lifetimes.
+`WORKERS`, `TIMEOUT`, `RETRIES`, `CHUNK_PAGES` and `RETRY_WORKERS`.
 
 ---
 

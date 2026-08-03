@@ -1,6 +1,6 @@
 *.pyc
 __pycache__/
 .venv/
-.examtopics_cache/
+.examtopics_index.json
 * dumps.txt
 * links.txt

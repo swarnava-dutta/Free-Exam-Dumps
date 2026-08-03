@@ -1,15 +1,11 @@
-from pathlib import Path
-
 from tqdm import tqdm
 
-from examtopics.cache import HtmlCache
 from examtopics.http_client import HttpFetcher
 from examtopics.index import find_exams, load_exams
 from examtopics.matching import exam_url
 from examtopics.output import write_links, write_questions
 from examtopics.parsers import parse_question_count
 from examtopics.scanner import count_discussion_pages, fetch_questions, scan_exam_links
-from examtopics.settings import CACHE_DIR, INDEX_TTL, PAGE_TTL
 
 MAX_CHOICES = 20
 
@@ -17,16 +13,13 @@ MAX_CHOICES = 20
 def main():
     print(f"\n{'=' * 60}\n  ExamTopics Scraper\n{'=' * 60}\n")
 
-    cache = HtmlCache(Path(CACHE_DIR), PAGE_TTL)
-    cache.purge_older_than(INDEX_TTL)
-    fetcher = HttpFetcher(cache)
+    fetcher = HttpFetcher()
     exams = load_exam_index(fetcher)
     provider, exam_slug, exam_name = choose_exam(fetcher, exams)
 
-    # ponytail: PAGE_TTL, not INDEX_TTL. This count drives the scan's early stop, and a
-    # stale low count stops the scan short -- an understated 200 on SAA-C03 returned 556
-    # links instead of 1019. PAGE_TTL also matches the listing pages being scanned, so the
-    # count and the pages are always the same 6-hour snapshot.
+    # This count decides when the scan stops early, so it is always fetched live. Reading a
+    # stale low count stops the scan short: an understated 200 on SAA-C03 yielded 556 links
+    # instead of 1019.
     published = parse_question_count(fetcher.fetch_html(exam_url(provider, exam_slug)))
     total_pages = count_discussion_pages(fetcher, provider)
 
@@ -84,10 +77,10 @@ def choose_exam(fetcher: HttpFetcher, exams):
 
         hits = find_exams(query, exams)
         if not hits and not refreshed:
-            # ponytail: the exam list is cached for a week, so an exam added since then
-            # looks like it does not exist. Rebuild from the site once per session, then
-            # search again. Once per session, so later typos stay instant.
-            print(f"  '{query}' is not on the cached list. Checking examtopics.com...")
+            # ponytail: the saved list never expires, so a newly added exam is missing from
+            # it. A failed search is exactly when that matters, so rebuild from the site and
+            # search again. Once per run, so later typos stay instant.
+            print(f"  '{query}' is not on the saved list. Checking examtopics.com...")
             exams = load_exam_index(fetcher, refresh=True)
             refreshed = True
             hits = find_exams(query, exams)

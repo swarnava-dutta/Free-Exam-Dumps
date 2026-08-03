@@ -2,11 +2,10 @@
 
 import os
 import tempfile
-import time
 from pathlib import Path
 
-from examtopics.cache import HtmlCache
-from examtopics.index import find_exams
+import examtopics.index as index_module
+from examtopics.index import find_exams, load_exams
 from examtopics.matching import (
     discussion_entry_url,
     exam_match_key,
@@ -129,33 +128,50 @@ def test_question_parsing():
     assert sum(vote["vote_count"] for vote in question["votes"]) == 37
 
 
-def test_cache_read_write_forget_and_purge():
+def test_exam_list_is_saved_reused_and_rebuilt():
+    """The saved list must be reused without hitting the network, and rebuilt on refresh."""
+
+    class FakeFetcher:
+        """Serves two providers, and counts requests so reuse is provable."""
+
+        def __init__(self):
+            self.requests = 0
+
+        def fetch_html(self, url):
+            self.requests += 1
+            if url.endswith("/exams/"):
+                return '<a href="/exams/amazon/">A</a><a href="/exams/github/">G</a>'
+            provider = url.rstrip("/").rsplit("/", 1)[-1]
+            return f'<a href="/exams/{provider}/{provider}-x/">{provider.upper()}-X: Full Name</a>'
+
     with tempfile.TemporaryDirectory() as directory:
-        cache = HtmlCache(Path(directory), ttl_seconds=3600)
-        fresh, stale = "https://x/fresh", "https://x/stale"
-        cache.write(fresh, "new page")
-        cache.write(stale, "old page")
+        original = index_module.INDEX_FILE
+        index_module.INDEX_FILE = os.path.join(directory, "index.json")
+        try:
+            fetcher = FakeFetcher()
+            first = load_exams(fetcher)
+            assert first == [
+                ("amazon", "amazon-x", "Full Name"),
+                ("github", "github-x", "Full Name"),
+            ], first
+            assert fetcher.requests == 3, "one /exams/ plus one per provider"
+            assert Path(index_module.INDEX_FILE).exists(), "list was not saved"
 
-        assert cache.read(fresh) == "new page"
-        # An explicit shorter TTL overrides the default.
-        assert cache.read(fresh, ttl_seconds=1) is not None
-        assert cache.read("https://x/never-written") is None
+            # A second load must come off disk, touching the network zero times.
+            reused = load_exams(fetcher)
+            assert reused == first
+            assert fetcher.requests == 3, "saved list was not reused"
 
-        # Backdate one entry by two hours.
-        old = time.time() - 7200
-        os.utime(cache._path_for(stale), (old, old))
-        assert cache.read(stale) is None, "TTL not applied on read"
-        assert cache.read(stale, ttl_seconds=0) == "old page", "0 must mean never expire"
+            # refresh=True must go back to the site even though the file is present.
+            assert load_exams(fetcher, refresh=True) == first
+            assert fetcher.requests == 6, "refresh did not re-fetch"
 
-        # Purge must remove the backdated entry and keep the fresh one.
-        assert cache.purge_older_than(3600) == 1
-        assert cache.read(stale, ttl_seconds=0) is None
-        assert cache.read(fresh) == "new page"
-        assert cache.purge_older_than(0) == 0, "0 must be a no-op, not delete everything"
-
-        cache.forget(fresh)
-        assert cache.read(fresh) is None
-        cache.forget(fresh)  # forgetting twice must not raise
+            # A corrupt file must be rebuilt rather than crash.
+            Path(index_module.INDEX_FILE).write_text("{not json", encoding="utf-8")
+            assert load_exams(fetcher) == first
+            assert fetcher.requests == 9, "corrupt file was not rebuilt"
+        finally:
+            index_module.INDEX_FILE = original
 
 
 def test_block_detection_does_not_eat_real_pages():

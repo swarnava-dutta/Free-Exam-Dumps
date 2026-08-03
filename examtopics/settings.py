@@ -15,10 +15,9 @@ CHUNK_PAGES = WORKERS * 4
 # re-fetched slowly instead of being reported as lost.
 RETRY_WORKERS = 2
 
-CACHE_DIR = ".examtopics_cache"
-PAGE_TTL = 6 * 60 * 60
-# Exam lists change rarely, so the provider/exam index gets a long cache life.
-INDEX_TTL = 7 * 24 * 60 * 60
+# The exam list, saved so the ~190 requests behind it are not repeated every run. No
+# expiry: a list missing an exam shows up as a failed search, which rebuilds it.
+INDEX_FILE = ".examtopics_index.json"
 
 REQUEST_HEADERS = {
     "User-Agent": (
