@@ -6,6 +6,33 @@ SEPARATOR = "=" * 70
 UNKNOWN_TOPIC = 10**9
 
 
+def read_links(path: str) -> List[str]:
+    """Read URLs previously written by write_links()."""
+    try:
+        with open(path, encoding="utf-8") as file:
+            return [line[3:].strip() for line in file if line.startswith(" - https://")]
+    except OSError:
+        return []
+
+
+def cached_question_count(links_path: str, dumps_path: str) -> int:
+    """Question count when both existing output files form a complete result."""
+    links = read_links(links_path)
+    if not links:
+        return 0
+    try:
+        with open(dumps_path, encoding="utf-8") as file:
+            lines = [line.strip() for line in file]
+        declared = int(
+            next(line.split(": ", 1)[1] for line in lines[:3] if line.startswith("Questions: "))
+        )
+    except (OSError, StopIteration, ValueError):
+        return 0
+    sections = lines.count(SEPARATOR)
+    complete = lines and lines[-1].startswith("Community answer:")
+    return len(links) if declared == sections == len(links) and complete else 0
+
+
 def group_by_topic(links: List[str]) -> Dict[int, List[str]]:
     """Links bucketed by topic, each bucket in question order."""
     grouped: Dict[int, List[str]] = {}

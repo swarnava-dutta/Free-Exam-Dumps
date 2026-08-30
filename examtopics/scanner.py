@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Tuple
 
 from tqdm import tqdm
@@ -17,8 +18,13 @@ from .settings import CHUNK_PAGES, RETRY_WORKERS, WORKERS
 UNKNOWN_QUESTION = (10**9, 10**9)
 
 
+def fetch_discussion_page(fetcher: HttpFetcher, provider: str) -> Tuple[int, str]:
+    html = fetcher.fetch_html(provider_discussion_url(provider))
+    return parse_discussion_page_count(html), html
+
+
 def count_discussion_pages(fetcher: HttpFetcher, provider: str) -> int:
-    return parse_discussion_page_count(fetcher.fetch_html(provider_discussion_url(provider)))
+    return fetch_discussion_page(fetcher, provider)[0]
 
 
 def scan_exam_links(
@@ -27,6 +33,7 @@ def scan_exam_links(
     exam_slug: str,
     total_pages: int,
     expected_questions: int = 0,
+    first_page_html: str = "",
 ) -> List[str]:
     """Discussion links for one exam, found by scanning the provider's listing pages.
 
@@ -36,7 +43,11 @@ def scan_exam_links(
     key = exam_match_key(exam_slug)
 
     def page_links(page_number: int) -> List[str]:
-        html = fetcher.fetch_html(provider_discussion_url(provider, page_number))
+        html = (
+            first_page_html
+            if page_number == 1 and first_page_html
+            else fetcher.fetch_html(provider_discussion_url(provider, page_number))
+        )
         return [
             discussion_entry_url(text, href)
             for text, href in extract_discussion_entries(html)
@@ -46,20 +57,22 @@ def scan_exam_links(
     links: List[str] = []
     failed: List[int] = []
     with tqdm(total=total_pages, desc="Scanning pages", unit="pg") as bar:
-        for start in range(1, total_pages + 1, CHUNK_PAGES):
-            chunk = range(start, min(start + CHUNK_PAGES, total_pages + 1))
-            found, chunk_failed = _collect(page_links, chunk, WORKERS, bar)
-            failed.extend(chunk_failed)
-            for page in found:
-                links.extend(page)
+        # Reuse threads across chunks so their HTTP sessions keep connections alive.
+        with ThreadPoolExecutor(max_workers=WORKERS) as executor:
+            for start in range(1, total_pages + 1, CHUNK_PAGES):
+                chunk = range(start, min(start + CHUNK_PAGES, total_pages + 1))
+                found, chunk_failed = _collect(page_links, chunk, WORKERS, bar, executor)
+                failed.extend(chunk_failed)
+                for page in found:
+                    links.extend(page)
 
-            links = dedupe(links)
-            bar.set_postfix(found=len(links))
-            # ponytail: stop as soon as every published question has been located.
-            # Exact only when the exam has a discussion for each question, but when it
-            # hits it saves scanning the rest of a 1500-page provider.
-            if expected_questions and _distinct_questions(links) >= expected_questions:
-                break
+                links = dedupe(links)
+                bar.set_postfix(found=len(links))
+                # ponytail: stop as soon as every published question has been located.
+                # Exact only when the exam has a discussion for each question, but when it
+                # hits it saves scanning the rest of a 1500-page provider.
+                if expected_questions and _distinct_questions(links) >= expected_questions:
+                    break
 
     for page in _retry(page_links, failed, "pages"):
         links.extend(page)
@@ -82,10 +95,10 @@ def fetch_questions(fetcher: HttpFetcher, links: List[str]) -> List[Dict[str, ob
     return sorted(questions, key=lambda item: item["sort_key"])
 
 
-def _collect(function: Callable, items, workers: int, bar) -> Tuple[List, List]:
+def _collect(function: Callable, items, workers: int, bar, executor=None) -> Tuple[List, List]:
     """Run function over items, advancing `bar`. Returns (results, failed items)."""
     results, failed = [], []
-    for item, result, error in parallel_results(function, items, workers):
+    for item, result, error in parallel_results(function, items, workers, executor):
         if error:
             failed.append(item)
         else:

@@ -1,6 +1,6 @@
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Executor, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Iterable, Iterator, Optional, Tuple
 
 import requests
@@ -54,16 +54,22 @@ def parallel_results(
     function: Callable[[Any], Any],
     items: Iterable[Any],
     workers: int = WORKERS,
+    executor: Optional[Executor] = None,
 ) -> Iterator[Tuple[Any, Any, Optional[BaseException]]]:
     """Yield (item, result, error) as each call finishes.
 
     The caller owns progress reporting and the failure policy, which keeps this the
     only place in the project that touches a thread pool.
     """
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+    owned = executor is None
+    executor = executor or ThreadPoolExecutor(max_workers=max(1, workers))
+    try:
         futures = {executor.submit(function, item): item for item in items}
         for future in as_completed(futures):
             try:
                 yield futures[future], future.result(), None
             except Exception as exc:
                 yield futures[future], None, exc
+    finally:
+        if owned:
+            executor.shutdown()

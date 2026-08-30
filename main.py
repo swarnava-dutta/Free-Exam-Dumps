@@ -1,11 +1,14 @@
+import sys
+from concurrent.futures import ThreadPoolExecutor
+
 from tqdm import tqdm
 
 from examtopics.http_client import HttpFetcher
 from examtopics.index import find_exams, load_exams
 from examtopics.matching import exam_url
-from examtopics.output import write_links, write_questions
+from examtopics.output import cached_question_count, read_links, write_links, write_questions
 from examtopics.parsers import parse_question_count
-from examtopics.scanner import count_discussion_pages, fetch_questions, scan_exam_links
+from examtopics.scanner import fetch_discussion_page, fetch_questions, scan_exam_links
 
 MAX_CHOICES = 20
 
@@ -17,28 +20,45 @@ def main():
     exams = load_exam_index(fetcher)
     provider, exam_slug, exam_name = choose_exam(fetcher, exams)
 
-    # This count decides when the scan stops early, so it is always fetched live. Reading a
-    # stale low count stops the scan short: an understated 200 on SAA-C03 yielded 556 links
-    # instead of 1019.
-    published = parse_question_count(fetcher.fetch_html(exam_url(provider, exam_slug)))
-    total_pages = count_discussion_pages(fetcher, provider)
+    links_path = f"{exam_slug} links.txt"
+    dumps_path = f"{exam_slug} dumps.txt"
+    refresh = "--refresh" in sys.argv[1:]
+    cached = 0 if refresh else cached_question_count(links_path, dumps_path)
+    if cached:
+        print(f"\nReady: {dumps_path}  ({cached} questions, reused)")
+        print("Run with --refresh to download it again.")
+        return
+
+    links = [] if refresh else read_links(links_path)
+    if links:
+        published = parse_question_count(fetcher.fetch_html(exam_url(provider, exam_slug)))
+    else:
+        # A fresh count prevents an understated value from stopping the scan early.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            exam_page = executor.submit(fetcher.fetch_html, exam_url(provider, exam_slug))
+            discussion_page = executor.submit(fetch_discussion_page, fetcher, provider)
+            published = parse_question_count(exam_page.result())
+            total_pages, first_page_html = discussion_page.result()
 
     print(f"\nExam:      {exam_name}")
     print(f"Provider:  {provider}")
     print(f"Published: {published or 'unknown'} questions")
-    print(f"Scanning:  {total_pages} discussion page{'' if total_pages == 1 else 's'}\n")
 
-    links = scan_exam_links(fetcher, provider, exam_slug, total_pages, published)
+    if links:
+        print(f"Links:     {len(links)} saved links reused.\n")
+    else:
+        print(f"Scanning:  {total_pages} discussion page{'' if total_pages == 1 else 's'}\n")
+        links = scan_exam_links(
+            fetcher, provider, exam_slug, total_pages, published, first_page_html
+        )
     if not links:
         print("\nNo discussion links found for this exam.")
         return
 
-    links_path = f"{exam_slug} links.txt"
     write_links(links_path, links)
     print(f"\nWrote {links_path}  ({len(links)} links)\n")
 
     questions = fetch_questions(fetcher, links)
-    dumps_path = f"{exam_slug} dumps.txt"
     write_questions(dumps_path, questions, exam_name, provider)
     print(f"\nWrote {dumps_path}  ({len(questions)} questions)")
 

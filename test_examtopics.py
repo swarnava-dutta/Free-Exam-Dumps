@@ -14,7 +14,7 @@ from examtopics.matching import (
     normalize_provider,
     provider_discussion_url,
 )
-from examtopics.output import group_by_topic
+from examtopics.output import cached_question_count, group_by_topic, read_links
 from examtopics.parsers import (
     extract_discussion_entries,
     extract_exam_entries,
@@ -172,6 +172,27 @@ def test_exam_list_is_saved_reused_and_rebuilt():
             assert fetcher.requests == 9, "corrupt file was not rebuilt"
         finally:
             index_module.INDEX_FILE = original
+
+
+def test_finished_outputs_are_reused():
+    with tempfile.TemporaryDirectory() as directory:
+        links_path = Path(directory, "exam links.txt")
+        dumps_path = Path(directory, "exam dumps.txt")
+        links_path.write_text(
+            "Topic 1:\n - https://www.examtopics.com/discussions/x/view/1/\n",
+            encoding="utf-8",
+        )
+        dumps_path.write_text(
+            f"Exam\nProvider: x\nQuestions: 1\n\n{'=' * 70}\nQuestion\n"
+            "Community answer: no votes\n",
+            encoding="utf-8",
+        )
+
+        assert len(read_links(links_path)) == 1
+        assert cached_question_count(links_path, dumps_path) == 1
+
+        dumps_path.write_text("Exam\nProvider: x\nQuestions: 1\n", encoding="utf-8")
+        assert cached_question_count(links_path, dumps_path) == 0
 
 
 def test_block_detection_does_not_eat_real_pages():
