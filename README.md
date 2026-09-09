@@ -325,13 +325,19 @@ Measured on a normal home connection:
 |---|---|
 | Building the exam list, first run only | ~30s, then reused |
 | Already downloaded exam | instant |
-| Small exam, e.g. `github-actions` (14 questions) | ~9s |
-| Medium exam, e.g. `hpe7-a07` (18 questions, 96 pages) | ~17s |
-| Large exam, `SAA-C03` (1019 questions, 604 pages) | **169s** |
+| `SAA-C03` — 1019 questions, listing already complete | **130s** |
+| `github-actions` — 14 from the listing, 65 after the id walk | ~247s |
+| `AI-103` — 81 from the listing, 135 after the id walk | ~346s |
+| `hpe7-a07` — 18 from the listing, 62 after the id walk | ~415s |
 
 Speed is limited by ExamTopics, not by the tool. Scanning runs at about 8 pages/second and
 question fetching at about 11 questions/second. Using more parallel workers was measured
 and does not help — see the notes at the bottom.
+
+The largest exam being the fastest looks wrong until you see why: SAA-C03's listing already
+carries all 1019, so the id walk never starts. It runs only when questions are missing, and
+when it cannot close the gap it works through every `ID_ROUNDS` round before giving up. That
+is where the minutes go on a sparse exam, and `ID_ROUNDS` is the dial if you want it shorter.
 
 ---
 
@@ -349,8 +355,8 @@ Earlier versions cached the pages too. It was removed: within a single run every
 fetched exactly once, so the cache never sped up the run you were waiting on — it only
 helped a *later* run, in exchange for **437 MB** of disk and three bugs (a stale question
 count that cut scans short, unbounded growth, and a sweep that expired the wrong tier).
-Deleting it made a full SAA-C03 run *faster*, 192s to 169s, because it no longer writes
-250 MB of HTML while you wait.
+Deleting it made a full SAA-C03 run *faster*, by about 12% when it was measured, because
+it no longer writes 250 MB of HTML while you wait.
 
 Raw pages are still never cached. This avoids the old 437 MB cache while making repeat runs
 instant and letting interrupted runs resume from the saved links.
@@ -366,9 +372,10 @@ Output files are overwritten by `--refresh`, so move or rename anything you want
 **Does it bypass the ExamTopics paywall?** No. Discussion pages are public; the tool reads
 those. It does not log in, solve captchas, or touch contributor-only or paid content.
 
-**Why do I get fewer questions than the `Published:` count?** Because only questions someone
-has discussed have a public page. Popular exams come out complete; niche ones come out
-sparse. Every run prints the exact coverage. See
+**Why do I get fewer questions than the `Published:` count?** Usually you do not any more.
+A question only reaches the provider's discussion listing once somebody posts about it, but
+its discussion page exists either way, so anything the listing withholds is recovered by id
+in a second pass. Every run still prints the exact coverage. See
 [What this cannot do](#what-this-cannot-do).
 
 **Which exams work?** All 2,289 on the site, across 187 providers. There is no supported-exam
@@ -420,27 +427,35 @@ Be clear-eyed about this before you rely on it.
 
 - **It does not bypass anything.** No login, no contributor access, no captcha solving, no
   paid tier. It reads pages that are already public to anyone with a browser.
-- **You only get questions the community has discussed.** This is the big one, and it varies
-  enormously by exam. Every fresh scrape ends with the number stated plainly:
+- **Coverage is usually complete, but it is not promised.** The discussion listing carries
+  a question only once somebody has posted about it, so on its own it can return a small
+  fraction of an exam. The id walk recovers most of the rest. Every fresh scrape ends with
+  the number stated plainly, so you always know which you got:
 
   ```text
-  Wrote github-actions dumps.txt  (14 questions)
-  Coverage:  14 of 99 published (14%)
+  Wrote github-actions dumps.txt  (65 questions)
+  Coverage:  65 of 99 published (65%)
   ```
 
-  Measured coverage:
+  Measured end to end, listing alone against the finished run:
 
-  | Exam | Got | Published | Coverage | Question numbers |
+  | Exam | From the listing | Final | Published | Coverage |
   |---|---|---|---|---|
-  | `saa-c03` | 1019 | 1019 | **100%** | 1–1019, no gaps |
-  | `dva-c02` | 557 | 557 | **100%** | 1–557, no gaps |
-  | `ai-900` | 246 | 246 | **100%** | 1–246, no gaps |
-  | `gh-300` | 103 | 116 | 89% | 7 topics, 6 gaps |
-  | `hpe7-a07` | 18 | 62 | 29% | 1–59, 41 gaps |
-  | `github-actions` | 14 | 99 | 14% | 1–52, 38 gaps |
+  | `saa-c03` | 1019 | 1019 | 1019 | **100%** |
+  | `ai-103` | 81 | 135 | 135 | **100%** |
+  | `hpe7-a07` | 18 | 62 | 62 | **100%** |
+  | `gh-300` | 103 | 116 | 124 | 93% |
+  | `github-actions` | 14 | 65 | 99 | 65% |
 
-  Popular exams are complete. Niche ones are sparse, because a question nobody discussed
-  has no public page to read. Nothing can fix that from outside the paywall.
+  What is still missing is one of two things, and neither is a paywall to be picked. Ids
+  come in per-exam batches: a batch the listing gave no entry in has nothing to walk out
+  from, and batches sit tens of thousands of ids apart, so widening will not stumble onto
+  one. Beyond that, some questions counted on the exam page have no discussion page at any
+  id. Raising `ID_ROUNDS` reaches further for proportional time.
+
+- **An exam with no published count gets no id walk.** When the exam page does not state a
+  total, the run prints `Published: unknown` and the walk has no target to work towards, so
+  you get the listing scan alone.
 
 - **Answers are not authoritative.** `Suggested answer` is ExamTopics' answer and it is
   sometimes wrong; that is exactly why the community vote is shown next to it. Use both.
@@ -451,7 +466,7 @@ Be clear-eyed about this before you rely on it.
 
 ## Running the tests
 
-There is one test file with 11 checks. It needs no network and no test framework:
+There is one test file with 13 checks. It needs no network and no test framework:
 
 ```text
 .venv\Scripts\python.exe test_examtopics.py
@@ -459,10 +474,12 @@ There is one test file with 11 checks. It needs no network and no test framework
 
 ```text
 ok  test_block_detection_does_not_eat_real_pages
+ok  test_discussion_title_reads_like_a_listing_entry
 ok  test_exam_index_extraction_and_search
 ok  test_exam_list_is_saved_reused_and_rebuilt
 ok  test_exam_matching_is_anchored
 ok  test_finished_outputs_are_reused
+ok  test_missing_questions_are_recovered_by_id
 ok  test_multi_answer_question
 ok  test_page_and_question_counts
 ok  test_provider_normalization
@@ -470,7 +487,7 @@ ok  test_question_parsing
 ok  test_question_parsing_tolerates_missing_parts
 ok  test_url_rebuild_and_ordering
 
-11 checks passed.
+13 checks passed.
 ```
 
 Run this after changing anything. Each check guards a bug that actually happened.
@@ -490,6 +507,15 @@ Every decision below came from measuring the live site, not from guessing.
 - **There is no per-exam discussion listing**, so finding one exam's questions means scanning
   the provider's listing pages. The scan stops early once every published question has been
   found — SAA-C03 stops at page 480 of 604, AI-900 at page 1152 of 1519.
+- **Whatever the listing withholds is recovered by id.** A question is listed only once
+  somebody posts about it, so a listing scan alone returns the discussed subset and nothing
+  else -- AI-103 came back 81 of 135. The discussion page exists regardless, and ExamTopics
+  hands ids out in contiguous per-exam batches, so the missing pages sit at ids beside the
+  ones the listing did give up. Probing outward from those and keeping whatever the page
+  title says belongs to the exam took AI-103 to 135 of 135 in 26 extra seconds. Each round
+  reaches one `ID_PAD` further out from every id confirmed so far, so a dense run of ids is
+  walked cheaply and a stretch of some other exam's ids sitting mid-batch still gets stepped
+  over; `ID_ROUNDS` caps how far that goes.
 - **Exam matching is anchored** on `exam<slug>topic`. Without the anchor,
   `aws-certified-developer-associate` also matches every `...-dva-c02` question.
 - **Link text is matched, not just the URL.** ExamTopics truncates long URLs before the
@@ -537,7 +563,7 @@ requirements.txt            requests, tqdm
 test_examtopics.py          offline checks
 
 examtopics/index.py         provider and exam index, exam code lookup
-examtopics/scanner.py       listing scan and question fetch
+examtopics/scanner.py       listing scan, id recovery pass, question fetch
 examtopics/parsers.py       HTML extraction
 examtopics/matching.py      slugs and exam matching
 examtopics/http_client.py   retrying GET, thread pool
@@ -546,7 +572,7 @@ examtopics/settings.py      tunables
 ```
 
 Want it faster or slower? Everything adjustable lives in `examtopics/settings.py`:
-`WORKERS`, `TIMEOUT`, `RETRIES`, `CHUNK_PAGES` and `RETRY_WORKERS`.
+`WORKERS`, `TIMEOUT`, `RETRIES`, `CHUNK_PAGES`, `RETRY_WORKERS`, `ID_PAD` and `ID_ROUNDS`.
 
 ---
 

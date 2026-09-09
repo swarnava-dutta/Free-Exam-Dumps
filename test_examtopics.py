@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import examtopics.index as index_module
+import examtopics.scanner as scanner_module
 from examtopics.index import find_exams, load_exams
 from examtopics.matching import (
     discussion_entry_url,
@@ -20,9 +21,11 @@ from examtopics.parsers import (
     extract_exam_entries,
     is_blocked_html,
     parse_discussion_page_count,
+    parse_discussion_title,
     parse_question,
     parse_question_count,
 )
+from examtopics.scanner import fill_missing_links
 
 LISTING_HTML = """
 <div class="discussion-list-page-indicator">12074 Discussions Page <strong>1</strong> of <strong>604</strong></div>
@@ -262,6 +265,84 @@ def test_exam_index_extraction_and_search():
     assert find_exams("nope", exams) == []
     assert find_exams("", exams) == []
 
+
+def test_missing_questions_are_recovered_by_id():
+    """A question absent from the listing is still reachable at a neighbouring id."""
+
+    class FakeFetcher:
+        """Ids 500-507 and 518-529 are ai-103 questions 1-20; the rest is another exam.
+
+        The 10-id foreign stretch at 508-517 is more than twice the ID_PAD below, so it
+        takes three widening rounds to cross and the middle one comes back empty. A walk
+        that stopped at the first fruitless round, or that never widened at all, would
+        lose questions 9-20. Id 498 always fails, because a dead id in the middle of a
+        sweep must not abort the rest of it.
+        """
+
+        def __init__(self):
+            self.seen = set()
+
+        def fetch_html(self, url):
+            self.seen.add(url)
+            page_id = int(url.rsplit("/view/", 1)[1].split("-", 1)[0])
+            if page_id == 498:
+                raise RuntimeError("simulated fetch failure")
+            if 500 <= page_id <= 507:
+                title = f"Exam AI-103 topic 1 question {page_id - 499} discussion"
+            elif 518 <= page_id <= 529:
+                title = f"Exam AI-103 topic 1 question {page_id - 509} discussion"
+            else:
+                title = f"Exam MB-500 topic 1 question {page_id} discussion"
+            return f"<title>{title} - ExamTopics</title>"
+
+    view = "https://www.examtopics.com/discussions/microsoft/view/"
+    listed = [
+        f"{view}502-exam-ai-103-topic-1-question-3-discussion/",
+        f"{view}503-exam-ai-103-topic-1-question-4-discussion/",
+    ]
+
+    original = (scanner_module.ID_PAD, scanner_module.ID_ROUNDS)
+    scanner_module.ID_PAD, scanner_module.ID_ROUNDS = 4, 6
+    try:
+        fetcher = FakeFetcher()
+        filled = fill_missing_links(fetcher, "microsoft", "ai-103", listed, 20)
+
+        numbers = sorted(extract_topic_question(link)[1] for link in filled)
+        assert numbers == list(range(1, 21)), numbers
+        assert len(filled) == len(set(filled)), "recovered links were not deduped"
+        # The listing links must survive untouched, slug and all.
+        assert filled[:2] == listed, filled[:2]
+        # A rebuilt link has to be the real thing, not the "-x-" probe placeholder.
+        assert (
+            f"{view}500-exam-ai-103-topic-1-question-1-discussion/" in filled
+        ), "probed link was not rebuilt from the page title"
+        assert (
+            f"{view}529-exam-ai-103-topic-1-question-20-discussion/" in filled
+        ), "the walk did not widen past the foreign ids at 508-517"
+
+        # ID_PAD bounds the sweep: without it this would walk the whole id space. Six
+        # rounds widening by 4 reach 24 either side of two seeds, and it stops early on
+        # a full set -- nowhere near the 10**6 ids that exist.
+        assert len(fetcher.seen) < 64, len(fetcher.seen)
+        # A failing id is skipped, not fatal.
+        assert any(url.endswith("498-x/") for url in fetcher.seen), "id 498 was never tried"
+
+        # Nothing missing means nothing to do, and nothing fetched.
+        idle = FakeFetcher()
+        assert fill_missing_links(idle, "microsoft", "ai-103", filled, 20) == filled
+        assert not idle.seen, "probed despite already having every published question"
+        assert not FakeFetcher().seen, "sanity: a fresh fake starts clean"
+    finally:
+        scanner_module.ID_PAD, scanner_module.ID_ROUNDS = original
+
+
+def test_discussion_title_reads_like_a_listing_entry():
+    page = "<html><head><title>Exam AI-103 topic 1 question 65 discussion - ExamTopics</title>"
+    assert parse_discussion_title(page) == "Exam AI-103 topic 1 question 65 discussion"
+    # An exam whose own name contains a dash must not be trimmed at that dash.
+    hyphenated = "<title>Exam AWS Certified Solutions Architect - Associate SAA-C03 topic 2 question 4 discussion</title>"
+    assert parse_discussion_title(hyphenated).endswith("topic 2 question 4 discussion")
+    assert parse_discussion_title("<p>no title here</p>") == ""
 
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]

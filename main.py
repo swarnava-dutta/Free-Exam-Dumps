@@ -8,7 +8,12 @@ from examtopics.index import find_exams, load_exams
 from examtopics.matching import exam_url
 from examtopics.output import cached_question_count, read_links, write_links, write_questions
 from examtopics.parsers import parse_question_count
-from examtopics.scanner import fetch_discussion_page, fetch_questions, scan_exam_links
+from examtopics.scanner import (
+    fetch_discussion_page,
+    fetch_questions,
+    fill_missing_links,
+    scan_exam_links,
+)
 
 MAX_CHOICES = 20
 
@@ -55,6 +60,7 @@ def main():
         print("\nNo discussion links found for this exam.")
         return
 
+    links = fill_missing_links(fetcher, provider, exam_slug, links, published)
     write_links(links_path, links)
     print(f"\nWrote {links_path}  ({len(links)} links)\n")
 

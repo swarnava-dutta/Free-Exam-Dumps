@@ -12,8 +12,13 @@ from .matching import (
     matches_exam,
     provider_discussion_url,
 )
-from .parsers import extract_discussion_entries, parse_discussion_page_count, parse_question
-from .settings import CHUNK_PAGES, RETRY_WORKERS, WORKERS
+from .parsers import (
+    extract_discussion_entries,
+    parse_discussion_page_count,
+    parse_discussion_title,
+    parse_question,
+)
+from .settings import CHUNK_PAGES, ID_PAD, ID_ROUNDS, RETRY_WORKERS, WORKERS
 
 UNKNOWN_QUESTION = (10**9, 10**9)
 
@@ -79,6 +84,80 @@ def scan_exam_links(
     return dedupe(links)
 
 
+def fill_missing_links(
+    fetcher: HttpFetcher,
+    provider: str,
+    exam_slug: str,
+    links: List[str],
+    published: int,
+) -> List[str]:
+    """Recover questions the provider listing does not carry.
+
+    A question only gets a listing entry once somebody posts about it, so an exam whose
+    newer questions have drawn no comments comes back short however carefully the
+    listing is scanned -- AI-103 gave up 81 of 135 that way. The discussion page exists
+    regardless, and ids are handed out in contiguous per-exam batches, so the missing
+    pages sit at ids beside the ones the listing did yield. Probe outward from those and
+    keep whatever the page title says belongs to this exam.
+    """
+    key = exam_match_key(exam_slug)
+    found = {extract_topic_question(link) for link in links} - {UNKNOWN_QUESTION}
+    known = {_discussion_id(link) for link in links} - {0}
+    if not known or not published or len(found) >= published:
+        return links
+
+    def view_url(page_id: int) -> str:
+        # The slug after the id is decoration; examtopics keys the page off the id alone.
+        return f"{provider_discussion_url(provider)}view/{page_id}-x/"
+
+    def probe(page_id: int) -> str:
+        return parse_discussion_title(fetcher.fetch_html(view_url(page_id)))
+
+    print(f"Listing:   {len(found)} of {published}. Probing ids for the rest.")
+    print()
+    recovered: List[str] = []
+    confirmed, probed = set(known), set(known)
+    with tqdm(total=published - len(found), desc="Probing ids", unit="q") as bar:
+        # Each round reaches further out from every id confirmed so far. That walks a
+        # dense run of ids cheaply, and still crosses a stretch of another exam's ids
+        # sitting inside this one's batch -- a fixed pad stops dead at the first such
+        # stretch and leaves everything past it unfound.
+        for reach in range(ID_PAD, ID_PAD * ID_ROUNDS + 1, ID_PAD):
+            candidates = sorted(
+                {
+                    page_id
+                    for seed in confirmed
+                    for page_id in range(seed - reach, seed + reach + 1)
+                }
+                - probed
+            )
+            probed.update(candidates)
+            for page_id, title, error in parallel_results(probe, candidates, WORKERS):
+                if error or not matches_exam(title, "", key):
+                    continue
+                confirmed.add(page_id)
+                link = discussion_entry_url(title, view_url(page_id))
+                question = extract_topic_question(link)
+                # UNKNOWN means the title carried no question number, so the link would
+                # still be the "-x-" probe placeholder. Never write one of those out.
+                if question == UNKNOWN_QUESTION:
+                    continue
+                recovered.append(link)
+                # A number already held can still be a second, genuinely different page:
+                # examtopics renumbers on republication and leaves both up. Keep it, but
+                # count it once, or the published total is never reached.
+                if question not in found:
+                    found.add(question)
+                    bar.update(1)
+            # Deliberately no "stop on a round that found nothing": a gap wider than one
+            # ID_PAD gives exactly that, and the next round is the one that clears it.
+            if len(found) >= published:
+                break
+
+    print(f"Recovered: {len(recovered)} question{'' if len(recovered) == 1 else 's'} by id.")
+    return dedupe(links + recovered)
+
+
 def fetch_questions(fetcher: HttpFetcher, links: List[str]) -> List[Dict[str, object]]:
     """Question text, choices, suggested answer and vote tally for every link."""
 
@@ -129,3 +208,9 @@ def _retry(function: Callable, failed: List, label: str) -> List:
 
 def _distinct_questions(links: List[str]) -> int:
     return len({extract_topic_question(link) for link in links} - {UNKNOWN_QUESTION})
+
+
+def _discussion_id(link: str) -> int:
+    """The numeric id from .../view/<id>-<slug>/, or 0 when the link has none."""
+    tail = link.split("/view/", 1)[-1].split("-", 1)[0]
+    return int(tail) if tail.isdigit() else 0

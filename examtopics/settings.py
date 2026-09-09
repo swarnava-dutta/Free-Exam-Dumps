@@ -15,6 +15,15 @@ CHUNK_PAGES = WORKERS * 4
 # re-fetched slowly instead of being reported as lost.
 RETRY_WORKERS = 2
 
+# A question is listed under /discussions/<provider>/ only once someone posts about it,
+# but its discussion page exists either way, and ids are handed out in contiguous
+# per-exam batches. So a question missing from the listing sits at an id next to one
+# that is on it. These bound the probe that recovers them: how far the first round
+# looks either side of a known id, and how many rounds run, each reaching one ID_PAD
+# further than the last so a run of some other exam's ids mid-batch gets stepped over.
+ID_PAD = 40
+ID_ROUNDS = 6
+
 # The exam list, saved so the ~190 requests behind it are not repeated every run. No
 # expiry: a list missing an exam shows up as a failed search, which rebuilds it.
 INDEX_FILE = ".examtopics_index.json"

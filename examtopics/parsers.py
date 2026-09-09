@@ -36,6 +36,7 @@ CARD_TEXT_PATTERN = re.compile(
     r"<p\b(?=[^>]*\bcard-text\b)[^>]*>(?P<body>.*?)</p>", re.I | re.S
 )
 TITLE_PATTERN = re.compile(r"<h1\b[^>]*>(.*?)</h1>", re.I | re.S)
+PAGE_TITLE_PATTERN = re.compile(r"<title\b[^>]*>(.*?)</title>", re.I | re.S)
 IMAGE_PATTERN = re.compile(r"<img\b[^>]*\bsrc=['\"]([^'\"]+)['\"][^>]*>", re.I)
 NOISE_PATTERN = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.I | re.S)
 
@@ -130,6 +131,19 @@ def parse_question_count(html: str) -> int:
     """Questions published for an exam, or 0 when the page does not say."""
     match = QUESTION_COUNT_PATTERN.search(visible_text(html))
     return int(match.group(1).replace(",", "")) if match else 0
+
+
+def parse_discussion_title(html: str) -> str:
+    """The "Exam X topic N question M discussion" heading of a discussion page.
+
+    The <h1> on these pages is a promo banner, so <title> is the only place the exam
+    and the question number appear together. The text it yields has the same shape as
+    a listing link's, which is what lets matches_exam() and discussion_entry_url()
+    handle a page found by id exactly as they handle one found on the listing.
+    """
+    match = PAGE_TITLE_PATTERN.search(html or "")
+    text = strip_html_text(match.group(1)) if match else ""
+    return re.sub(r"\s*[-|]\s*ExamTopics\s*$", "", text, flags=re.I)
 
 
 def parse_question(html: str) -> Dict[str, object]:
