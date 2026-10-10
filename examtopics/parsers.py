@@ -48,7 +48,7 @@ BLOCKED_MARKERS = (
 )
 # Every real examtopics page carries the site nav; a Cloudflare interstitial does not.
 # Verified present on all nine page shapes this project fetches.
-CONTENT_SENTINEL = 'href="/exams/"'
+EXAMTOPICS_URL_PREFIX = r"(?:https?://(?:www\.)?examtopics\.com)?"
 
 
 def strip_html_text(value: str) -> str:
@@ -80,7 +80,7 @@ def is_blocked_html(html: str) -> bool:
     # ponytail: markers are only consulted once the site nav is absent. Matching them
     # against whole-page text discarded real questions -- "Access Denied" is ordinary
     # wording in AWS IAM questions, and it silently dropped 2 of 1019 on SAA-C03.
-    if CONTENT_SENTINEL in text:
+    if re.search(r'href=["\'](?:https?://(?:www\.)?examtopics\.com)?/exams/["\']', text):
         return False
     return any(marker in text for marker in BLOCKED_MARKERS)
 
@@ -101,7 +101,8 @@ def extract_discussion_entries(html: str) -> List[Tuple[str, str]]:
 def extract_exam_entries(html: str, provider: str) -> List[Tuple[str, str]]:
     """(exam slug, display name) for every exam linked on /exams/<provider>/."""
     pattern = re.compile(
-        r"<a\b[^>]*\bhref=['\"]/exams/%s/([^/'\"]+)/['\"][^>]*>(.*?)</a>" % re.escape(provider),
+        r"<a\b[^>]*\bhref=['\"]%s/exams/%s/([^/'\"]+)/['\"][^>]*>(.*?)</a>"
+        % (EXAMTOPICS_URL_PREFIX, re.escape(provider)),
         re.I | re.S,
     )
     entries: Dict[str, str] = {}
@@ -117,7 +118,16 @@ def extract_exam_entries(html: str, provider: str) -> List[Tuple[str, str]]:
 
 def extract_providers(html: str) -> List[str]:
     """Provider slugs linked on /exams/."""
-    return sorted(set(re.findall(r"href=['\"]/exams/([^/'\"]+)/['\"]", html, re.I)))
+    return sorted(
+        set(
+            re.findall(
+                r"href=['\"]%s/exams/([^/'\"]+)/['\"]"
+                % EXAMTOPICS_URL_PREFIX,
+                html,
+                re.I,
+            )
+        )
+    )
 
 
 def parse_discussion_page_count(html: str) -> int:
