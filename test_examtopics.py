@@ -19,6 +19,7 @@ from examtopics.output import cached_question_count, group_by_topic, read_links
 from examtopics.parsers import (
     extract_discussion_entries,
     extract_exam_entries,
+    extract_providers,
     is_blocked_html,
     parse_discussion_page_count,
     parse_discussion_title,
@@ -73,6 +74,11 @@ EXAMS_HTML = """
 <a href="/exams/microsoft/az-104/">AZ-104</a>
 """
 
+ABSOLUTE_EXAMS_HTML = """
+<a href="https://www.examtopics.com/exams/amazon/ans-c00/">ANS-C00: AWS Certified Advanced Networking - Specialty</a>
+<a href="https://www.examtopics.com/exams/microsoft/az-104/">AZ-104</a>
+"""
+
 
 def test_provider_normalization():
     # The bug this guards: lower() alone left spaces in and produced a 404 URL.
@@ -83,6 +89,15 @@ def test_provider_normalization():
     assert normalize_provider("/exams/microsoft/az-104/") == "microsoft"
     assert normalize_provider("") == ""
     assert " " not in provider_discussion_url("Palo Alto Networks")
+
+
+def test_exam_parsers_accept_absolute_examtopics_links():
+    assert extract_providers(
+        '<a href="https://www.examtopics.com/exams/amazon/">Amazon</a>'
+    ) == ["amazon"]
+    assert extract_exam_entries(ABSOLUTE_EXAMS_HTML, "amazon") == [
+        ("ans-c00", "AWS Certified Advanced Networking - Specialty")
+    ]
     assert provider_discussion_url("amazon", 1).endswith("/discussions/amazon/")
     assert provider_discussion_url("amazon", 7).endswith("/discussions/amazon/7/")
 
